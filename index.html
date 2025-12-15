@@ -1,0 +1,1164 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Minijuego FNAF 8-bit</title>
+<style>
+html, body {
+    margin: 0;
+    padding: 0;
+    background: #000;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+}
+canvas {
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+    background: #000;
+    box-shadow: 0 0 20px #000;
+}
+#videoOverlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.9);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 999;
+}
+
+#videoOverlay iframe {
+    width: 80%;
+    max-width: 900px;
+    aspect-ratio: 16 / 9;
+    border-radius: 8px;
+}
+</style>
+</head>
+<body>
+
+<canvas id="game" width="320" height="240"></canvas>
+<div id="videoOverlay">
+    <iframe id="ytVideo"
+        src=""
+        frameborder="0"
+        allow="autoplay; encrypted-media"
+        allowfullscreen>
+    </iframe>
+</div>
+<script>
+// =================== CONFIG ===================
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+ctx.imageSmoothingEnabled = false;
+
+// =================== AUDIO ===================
+const AudioCtx = window.AudioContext || window.webkitAudioContext;
+const audioCtx = new AudioCtx();
+
+const masterGain = audioCtx.createGain();
+masterGain.gain.value = 0.15;
+masterGain.connect(audioCtx.destination);
+
+
+// desbloquear audio con primer input
+window.addEventListener("keydown", () => {
+    if (audioCtx.state === "suspended") audioCtx.resume();
+}, { once:true });
+
+let musicInterval = null;
+
+function startMusic(){
+    if (musicInterval) return;
+
+    const notes = [
+    196, 220, 262, 196,
+    220, 262, 330, 262
+];
+    let i = 0;
+
+    musicInterval = setInterval(() => {
+        playTone(notes[i % notes.length], 0.12, 0.04);
+        i++;
+    }, 240);
+}
+
+function playTone(freq, duration=0.1, volume=0.08){
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+
+    osc.type = "square";
+    osc.frequency.value = freq;
+
+    gain.gain.value = volume;
+
+    osc.connect(gain);
+    gain.connect(masterGain);
+
+    osc.start();
+    osc.stop(audioCtx.currentTime + duration);
+}
+
+// sonidos concretos
+function sfxJump(){
+    playTone(520, 0.05, 0.10);
+    setTimeout(() => playTone(780, 0.05, 0.08), 50);
+}
+function sfxSquash(){ playTone(180, 0.12, 0.12); }
+function sfxDeath(){ playTone(90, 0.3, 0.15); }
+function sfxWin(){
+    playTone(600,0.1,0.12);
+    setTimeout(()=>playTone(800,0.15,0.12),120);
+}
+
+
+const BASE_WIDTH = 320;
+const BASE_HEIGHT = 240;
+const TILE = 16;
+
+// Pixel-perfect scaling
+function resizeCanvas() {
+    const scale = Math.max(1, Math.floor(Math.min(
+        window.innerWidth / BASE_WIDTH,
+        window.innerHeight / BASE_HEIGHT
+    )));
+    canvas.style.width  = BASE_WIDTH  * scale + "px";
+    canvas.style.height = BASE_HEIGHT * scale + "px";
+}
+window.addEventListener("resize", resizeCanvas);
+resizeCanvas();
+
+// =================== PALETA ===================
+const colors = {
+    sky: "#1c2ef0",
+
+    cloudLight: "#f8f8f8",
+    cloudShadow: "#d0d0d0",
+
+    bushLight: "#3db46d",
+    bushMid:   "#2c8a52",
+    bushDark:  "#1b5b36",
+
+    grassBright: "#4fb83b",
+    grassDark:   "#2d7d25",
+    dirt:        "#7b3f1f",
+    dirtShadow:  "#5a2c16",
+    dirtLine:    "#9b5527",
+
+    spike: "#f8f8f8",
+    spikeShadow: "#c0c0c0",
+
+    flowerPetal: "#f8f8f8",
+    flowerCenter: "#ffd858",
+    flowerStem: "#2f8f35",
+
+    // personaje
+    hair: "#eceafc",
+    hairShadow: "#c5c3de",
+    hairHighlight: "#ffffff",
+    hairViolet: "#c6a5ff",
+    skin: "#f7d1b2",
+    blush: "#f49ba1",
+    eyeDark: "#111111",
+    shirt: "#151515",
+    shirtLight: "#303030",
+    shorts: "#101010",
+    boot: "#050508",
+
+    // gorrito
+    hatMain: "#ff6b6b",
+    hatStripe: "#ffc94a",
+    hatStripe2: "#5fa8ff",
+    hatBase: "#b11f3b",
+    hatTop: "#ffffff",
+
+    // silla gamer
+    chairMain: "#d1364f",
+    chairDark: "#8b1a32",
+    chairAccent: "#f8f8f8",
+    chairBase: "#303030"
+};
+
+// =================== NIVEL ===================
+const level = [
+    // =================== CIELO ===================
+    "................................................................................................",
+    "................................................................................................",
+    "................................................................................................",
+    "................................................................................................",
+    "................................................................................................",
+    "................................................................................................",
+
+    // ================= PLATAFORMAS ALTAS =================
+"....................PPP.................PPP.................PPP.................PPP....",
+
+    // ================= PLATAFORMAS MEDIAS =================
+    "........PPP................PPP................PPP................PPP................PPP........",
+
+    // ================= META =================
+    ".........................................................................................C......",
+
+    // ================= CARTEL + PINCHOS =================
+    "....S........^^.................^^.................^^.................^^.......................",
+
+    // =================== SUELO ===================
+    "GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG",
+    "GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG",
+    "GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG",
+    "GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG",
+    "GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG"
+];
+
+// =================== CUPCAKES AUTO ===================
+const cupcakeTiles = new Set();
+
+for (let ty = 0; ty < level.length; ty++) {
+    for (let tx = 0; tx < level[ty].length; tx++) {
+        if (level[ty][tx] === "P") {
+            // si arriba está vacío
+            if (ty > 0 && level[ty - 1][tx] === ".") {
+                cupcakeTiles.add(tx + "," + (ty - 1));
+            }
+        }
+    }
+}
+const SOLID_TILES  = new Set(["G","P"]);
+const HAZARD_TILES = new Set(["^"]);
+const LEVEL_WIDTH = Math.max(...level.map(row => row.length)) * TILE;
+
+let cameraX = 0;
+const cameraLerp = 0.12;
+let hasWon = false;
+let cupcakes = 0;
+
+
+// =================== PLAYER ===================
+const player = {
+    x: 32,
+    y: 12*TILE - 24,
+    w: 16,
+    h: 24,
+    vx: 0,
+    vy: 0,
+    onGround: false,
+    facingLeft: false,
+    spawnX: 32,
+    spawnY: 12*TILE - 24,
+    state: "idle",
+    frame: 0,
+    animTimer: 0,
+    blinkTimer: 0,
+    blinking: false
+};
+
+// =================== ENEMIGOS (LIMONES TIPO GOOMBA) ===================
+const enemies = [
+    { x: 180, y: 10*TILE, startX:180, startY:10*TILE, vx:-0.6, vy:0, w:16, h:15, onGround:false, alive:true, frame:0, animTimer:0, squashed:false, squashTimer:0 },
+    { x: 260, y: 10*TILE, startX:260, startY:10*TILE, vx: 0.6, vy:0, w:16, h:15, onGround:false, alive:true, frame:0, animTimer:0, squashed:false, squashTimer:0 },
+    { x: 340, y: 10*TILE, startX:340, startY:10*TILE, vx:-0.6, vy:0, w:16, h:15, onGround:false, alive:true, frame:0, animTimer:0, squashed:false, squashTimer:0 },
+    { x: 420, y: 10*TILE, startX:420, startY:10*TILE, vx: 0.6, vy:0, w:16, h:15, onGround:false, alive:true, frame:0, animTimer:0, squashed:false, squashTimer:0 },
+    { x: 520, y: 10*TILE, startX:520, startY:10*TILE, vx:-0.6, vy:0, w:16, h:15, onGround:false, alive:true, frame:0, animTimer:0, squashed:false, squashTimer:0 }
+];
+
+const physics = {
+    gravity: 0.40,
+    maxFall: 8,
+    accelGround: 0.60,
+    accelAir: 0.55,
+    maxSpeed: 2.4,
+    frictionGround: 0.72,
+    frictionAir: 0.98,
+    jumpPower: -6.5
+};
+
+const keys = {
+    left: false,
+    right: false,
+    jumpPressed: false,
+    jumpHeld: false
+};
+
+let coyoteTime = 0;
+let jumpBuffer = 0;
+const COYOTE_MAX = 0.09;
+const JUMP_BUFFER_MAX = 0.14;
+// =================== INPUT ===================
+window.addEventListener("keydown", (e) => {
+    switch (e.code) {
+        case "ArrowLeft":
+        case "KeyA": keys.left = true; break;
+        case "ArrowRight":
+        case "KeyD": keys.right = true; break;
+        case "ArrowUp":
+        case "KeyW":
+        case "Space":
+            keys.jumpPressed = true;
+            keys.jumpHeld = true;
+            break;
+        case "KeyR":
+            hasWon = false;
+            respawnPlayer();
+            break;
+    }
+});
+
+window.addEventListener("keyup", (e) => {
+    switch (e.code) {
+        case "ArrowLeft":
+        case "KeyA": keys.left = false; break;
+        case "ArrowRight":
+        case "KeyD": keys.right = false; break;
+        case "ArrowUp":
+        case "KeyW":
+        case "Space": keys.jumpHeld = false; break;
+    }
+});
+
+// =============== UTILS ===============
+function getTile(tx, ty) {
+    if (tx < 0 || ty < 0 || ty >= level.length) return ".";
+    if (tx >= level[ty].length) return ".";
+    return level[ty][tx];
+}
+
+function rectIntersects(px, py, pw, ph, tx, ty) {
+    const x = tx * TILE;
+    const y = ty * TILE;
+    return !(px + pw <= x || px >= x + TILE || py + ph <= y || py >= y + TILE);
+}
+
+function rectOverlap(a, b) {
+    return !(
+        a.x + a.w <= b.x ||
+        a.x >= b.x + b.w ||
+        a.y + a.h <= b.y ||
+        a.y >= b.y + b.h
+    );
+}
+// =================== LOOP ===================
+let lastTime = performance.now();
+requestAnimationFrame(loop);
+
+function loop(t) {
+    const dt = (t - lastTime) / 1000;
+    lastTime = t;
+
+    startMusic(); // 🎵 música constante
+
+    update(dt);
+    render();
+    requestAnimationFrame(loop);
+}
+// =================== UPDATE ===================
+function update(dt) {
+    if (!hasWon) {
+
+        // MOVIMIENTO HORIZONTAL
+        if (keys.left) {
+            player.vx -= player.onGround ? physics.accelGround : physics.accelAir;
+        }
+        if (keys.right) {
+            player.vx += player.onGround ? physics.accelGround : physics.accelAir;
+        }
+
+        // FRENADO
+        if (!keys.left && !keys.right) {
+            player.vx *= player.onGround ? physics.frictionGround : physics.frictionAir;
+        }
+
+        // LIMITAR VELOCIDAD
+        if (player.vx >  physics.maxSpeed) player.vx =  physics.maxSpeed;
+        if (player.vx < -physics.maxSpeed) player.vx = -physics.maxSpeed;
+
+        // dirección
+        if (keys.left)  player.facingLeft = true;
+        if (keys.right) player.facingLeft = false;
+
+        // COYOTE TIME
+        if (player.onGround) coyoteTime = COYOTE_MAX;
+        else coyoteTime = Math.max(0, coyoteTime - dt);
+
+        // JUMP BUFFER
+        if (keys.jumpPressed) {
+            jumpBuffer = JUMP_BUFFER_MAX;
+            keys.jumpPressed = false;
+        } else jumpBuffer = Math.max(0, jumpBuffer - dt);
+
+        // SALTO
+        if (jumpBuffer > 0 && coyoteTime > 0) {
+    player.vy = physics.jumpPower;
+    sfxJump(); // 🔊 SALTO
+    player.onGround = false;
+    coyoteTime = 0;
+    jumpBuffer = 0;
+}
+
+        // salto variable
+        if (!keys.jumpHeld && player.vy < 0) player.vy *= 0.85;
+
+        // gravedad
+        player.vy += physics.gravity;
+        if (player.vy > physics.maxFall) player.vy = physics.maxFall;
+
+        moveAndCollide(player);
+updateEnemies(dt);
+
+        if (player.y > BASE_HEIGHT + 64) respawnPlayer();
+
+        updateAnimation(dt);
+    }
+
+
+    updateCamera();
+}
+
+function updateCamera() {
+    const target = player.x + player.w/2 - BASE_WIDTH/2;
+    const maxCam = Math.max(0, LEVEL_WIDTH - BASE_WIDTH);
+    const desired = Math.min(Math.max(0, target), maxCam);
+    cameraX += (desired - cameraX) * cameraLerp;
+}
+
+// =================== COLISIONES ===================
+function respawnPlayer() {
+    sfxDeath(); // 🔊 MUERTE
+
+    player.x = player.spawnX;
+    player.y = player.spawnY;
+    player.vx = 0;
+    player.vy = 0;
+    player.onGround = false;
+    coyoteTime = 0;
+    jumpBuffer = 0;
+
+    // 🔁 REVIVIR ENEMIGOS
+    for (const e of enemies) {
+        e.x = e.startX;
+        e.y = e.startY;
+        e.vx = Math.sign(e.vx || 1) * 0.6;
+        e.vy = 0;
+        e.onGround = false;
+
+        e.alive = true;
+        e.squashed = false;
+        e.squashTimer = 0;
+        e.frame = 0;
+        e.animTimer = 0;
+    }
+}
+
+
+
+function moveAndCollide(p) {
+    // Horizontal
+    p.x += p.vx;
+    let left = Math.floor(p.x/TILE);
+    let right = Math.floor((p.x+p.w-1)/TILE);
+    let top = Math.floor(p.y/TILE);
+    let bottom = Math.floor((p.y+p.h-1)/TILE);
+
+    for (let ty=top; ty<=bottom; ty++){
+        if (p.vx > 0) {
+            const t = getTile(right,ty);
+            if (SOLID_TILES.has(t) && rectIntersects(p.x,p.y,p.w,p.h,right,ty)) {
+                p.x = right*TILE - p.w;
+                p.vx = 0;
+            }
+        } else if (p.vx < 0) {
+            const t = getTile(left,ty);
+            if (SOLID_TILES.has(t) && rectIntersects(p.x,p.y,p.w,p.h,left,ty)) {
+                p.x = (left+1)*TILE;
+                p.vx = 0;
+            }
+        }
+    }
+
+
+
+    // Vertical
+    p.y += p.vy;
+    left = Math.floor(p.x/TILE);
+    right = Math.floor((p.x+p.w-1)/TILE);
+    top = Math.floor(p.y/TILE);
+    bottom = Math.floor((p.y+p.h-1)/TILE);
+
+    const wasGround = p.onGround;
+    p.onGround = false;
+
+    for (let tx=left; tx<=right; tx++){
+        if (p.vy > 0) {
+            const t = getTile(tx,bottom);
+            if (SOLID_TILES.has(t) && rectIntersects(p.x,p.y,p.w,p.h,tx,bottom)) {
+                p.y = bottom*TILE - p.h;
+                p.vy = 0;
+                p.onGround = true;
+            }
+        } else if (p.vy < 0) {
+            const t = getTile(tx,top);
+            if (SOLID_TILES.has(t) && rectIntersects(p.x,p.y,p.w,p.h,tx,top)) {
+                p.y = (top+1)*TILE;
+                p.vy = 0;
+            }
+        }
+    }
+
+    if (p.onGround && !wasGround) coyoteTime = COYOTE_MAX;
+
+    // Pinchos
+    for (let ty=top; ty<=bottom; ty++){
+        for (let tx=left; tx<=right; tx++){
+            if (HAZARD_TILES.has(getTile(tx,ty)) &&
+                rectIntersects(p.x,p.y,p.w,p.h,tx,ty)) {
+                respawnPlayer();
+                return;
+            }
+        }
+    }
+  // 🍰 Cupcakes automáticos
+for (const key of cupcakeTiles) {
+    const [cx, cy] = key.split(",").map(Number);
+
+    if (rectIntersects(
+        p.x, p.y, p.w, p.h,
+        cx, cy
+    )) {
+        cupcakeTiles.delete(key);
+        cupcakes++;
+        playTone(880, 0.08, 0.12);
+        break;
+    }
+}
+    // Meta
+    for (let ty=top; ty<=bottom; ty++){
+        for (let tx=left; tx<=right; tx++){
+            if (getTile(tx,ty)==="C" &&
+    rectIntersects(p.x,p.y,p.w,p.h,tx,ty)) {
+    hasWon = true;
+    sfxWin(); // 🔊 GANAR
+    showEndingVideo();
+}
+}
+    }
+}
+
+// ==================================================
+// 🍋 ENEMIGOS TIPO GOOMBA (LIMONES)
+// ==================================================
+
+function updateEnemies(dt) {
+    for (const e of enemies) {
+        if (!e.alive) continue;
+
+if (e.squashed) {
+    e.squashTimer -= dt;
+    if (e.squashTimer <= 0) {
+        e.alive = false;
+    }
+    continue;
+}
+// ⏱️ animación
+e.animTimer += dt;
+if (e.animTimer > 0.25) {
+    e.frame = (e.frame + 1) % 2; // 0 / 1
+    e.animTimer = 0;
+}
+        // gravedad
+        e.vy += physics.gravity;
+        if (e.vy > physics.maxFall) e.vy = physics.maxFall;
+
+        // movimiento horizontal
+        e.x += e.vx;
+
+        // chequeo de pared
+        const left  = Math.floor(e.x / TILE);
+        const right = Math.floor((e.x + e.w - 1) / TILE);
+        const feet  = Math.floor((e.y + e.h) / TILE);
+
+        // si choca con pared → gira
+        if (
+            SOLID_TILES.has(getTile(e.vx > 0 ? right + 1 : left - 1, feet - 1))
+        ) {
+            e.vx *= -1;
+        }
+
+        // movimiento vertical
+        e.y += e.vy;
+        e.onGround = false;
+
+        const bottom = Math.floor((e.y + e.h) / TILE);
+
+        for (let tx = left; tx <= right; tx++) {
+            if (SOLID_TILES.has(getTile(tx, bottom))) {
+                e.y = bottom * TILE - e.h;
+                e.vy = 0;
+                e.onGround = true;
+            }
+        }
+
+        // girar si no hay suelo adelante (Goomba clásico)
+        const frontX = Math.floor((e.x + (e.vx > 0 ? e.w : -1)) / TILE);
+        if (!SOLID_TILES.has(getTile(frontX, bottom))) {
+            e.vx *= -1;
+        }
+
+        // colisión con jugador
+        if (rectOverlap(player, e)) {
+
+    const playerBottom = player.y + player.h;
+    const enemyTop = e.y + 4; // margen indulgente
+    const falling = player.vy > 0;
+
+    if (falling && playerBottom <= enemyTop + 8) {
+        // ✅ APLASTADO CORRECTO
+        e.squashed = true;
+        e.squashTimer = 0.25;
+        sfxSquash();
+        player.vy = physics.jumpPower * 0.6;
+    } else {
+        respawnPlayer();
+    }
+}
+        }
+}
+// =================== ANIMACIÓN ===================
+function updateAnimation(dt) {
+    if (!player.onGround) player.state = "jump";
+    else if (Math.abs(player.vx) > 0.05) player.state = "walk";
+    else player.state = "idle";
+
+    player.animTimer += dt;
+
+    if (player.state === "idle") {
+        player.frame = (player.animTimer % 0.8 < 0.4) ? 0 : 1;
+    } else if (player.state === "walk") {
+        player.frame = (player.animTimer % 0.36 < 0.18) ? 0 : 1;
+    } else player.frame = 0;
+
+    // parpadeo
+    player.blinkTimer -= dt;
+    if (player.blinkTimer <= 0) {
+        player.blinkTimer = 2 + Math.random()*3;
+        player.blinking = true;
+        setTimeout(()=>player.blinking=false,120);
+    }
+}
+
+// =================== RENDER ===================
+function render() {
+    ctx.fillStyle = colors.sky;
+    ctx.fillRect(0,0,BASE_WIDTH,BASE_HEIGHT);
+
+    const cam = Math.round(cameraX);
+    ctx.save();
+    ctx.translate(-cam, 0);
+
+    drawBackground();
+    drawTiles();
+    drawSign(32, 7 * TILE);
+    drawEnemies();
+    drawPlayer();
+
+    ctx.restore();
+
+    if (hasWon) drawWin();
+    drawCRT();
+}
+// =================== FONDO ===================
+function drawBackground() {
+    const baseY = 140;
+
+    ctx.fillStyle=colors.bushDark;
+    ctx.fillRect(24,baseY+16,LEVEL_WIDTH-48,72);
+
+    ctx.fillStyle=colors.bushMid;
+    for (let i=0;i<LEVEL_WIDTH/28;i++){
+        ctx.fillRect(24+i*28,baseY+(i%2?6:0),40,24);
+    }
+
+    ctx.fillStyle=colors.bushLight;
+    for (let i=0;i<LEVEL_WIDTH/28;i++){
+        ctx.fillRect(28+i*28,baseY-8+(i%2?4:0),32,12);
+    }
+
+    drawCloud(60,34);
+    drawCloud(220,26);
+    drawCloud(380,30);
+    drawCloud(520,70,true);
+}
+
+function drawCloud(x,y,large=false){
+    const w=large?60:44;
+    ctx.fillStyle=colors.cloudLight;
+    ctx.fillRect(x+4,y,w-8,6);
+    ctx.fillRect(x,y+4,w,6);
+    ctx.fillRect(x+6,y+10,w-12,6);
+
+    ctx.fillStyle=colors.cloudShadow;
+    ctx.fillRect(x+2,y+14,w-4,2);
+}
+
+// =================== TILES ===================
+function drawTiles(){
+    for (let ty = 0; ty < level.length; ty++){
+        for (let tx = 0; tx < level[ty].length; tx++){
+            const ch = level[ty][tx];
+            const x = tx * TILE;
+            const y = ty * TILE;
+
+            if (ch === "G") {
+                const above = getTile(tx, ty - 1);
+                if (above === "G") drawDirtOnly(x, y);
+                else drawGround(x, y);
+            }
+            else if (ch === "P") drawPlatform(x, y);
+            else if (ch === "^") drawSpike(x, y);
+            else if (ch === "C") drawChair(x, y - 10);
+        }
+    }
+
+    // 🍰 cupcakes automáticos
+    for (const key of cupcakeTiles) {
+        const [tx, ty] = key.split(",").map(Number);
+        drawCupcake(tx * TILE, ty * TILE);
+    }
+}
+function drawGround(x,y){
+    // CÉSPED (solo arriba)
+    ctx.fillStyle = colors.grassBright;
+    ctx.fillRect(x, y, 16, 3);
+
+    ctx.fillStyle = colors.grassDark;
+    ctx.fillRect(x, y + 3, 16, 2);
+
+    // TIERRA (sin verde)
+    ctx.fillStyle = colors.dirt;
+    ctx.fillRect(x, y + 5, 16, 11);
+
+    // SOMBRAS DE TIERRA (marrón, no verde)
+    ctx.fillStyle = colors.dirtShadow;
+    ctx.fillRect(x + 2, y + 8, 8, 1);
+    ctx.fillRect(x + 5, y + 12, 7, 1);
+}
+
+function drawDirtOnly(x, y){
+    // bloque completo de tierra (SIN césped)
+    ctx.fillStyle = colors.dirt;
+    ctx.fillRect(x, y, 16, 16);
+
+    // sombras marrones
+    ctx.fillStyle = colors.dirtShadow;
+    ctx.fillRect(x + 2, y + 6, 8, 1);
+    ctx.fillRect(x + 5, y + 11, 7, 1);
+}
+
+function drawPlatform(x,y){
+    ctx.fillStyle=colors.grassBright;ctx.fillRect(x,y,16,3);
+    ctx.fillStyle=colors.grassDark; ctx.fillRect(x,y+3,16,2);
+    ctx.fillStyle=colors.dirt;      ctx.fillRect(x,y+5,16,3);
+}
+
+function drawSpike(x,y){
+    ctx.fillStyle=colors.dirtShadow;
+    ctx.fillRect(x,y+13,16,3);
+
+    ctx.fillStyle=colors.spike;
+    for (let i=0;i<9;i++){
+        const w=16-i*2;if(w<=0)break;
+        ctx.fillRect(x+i,y+12-i,w,1);
+    }
+}
+
+function drawCupcake(x,y){
+    ctx.save();
+    ctx.translate(x, y);
+
+    // base
+    ctx.fillStyle = "#c97a44";
+    ctx.fillRect(4, 8, 8, 6);
+
+    // frosting
+    ctx.fillStyle = "#ff9ad5";
+    ctx.fillRect(3, 5, 10, 3);
+    ctx.fillRect(4, 3, 8, 2);
+
+    // cereza
+    ctx.fillStyle = "#ff3b3b";
+    ctx.fillRect(7, 1, 2, 2);
+
+    ctx.restore();
+}
+
+function drawChair(x,y){
+    ctx.save();ctx.translate(x,y);
+    ctx.fillStyle=colors.chairBase;
+    ctx.fillRect(4,18,8,2);
+    ctx.fillRect(2,20,3,2);
+    ctx.fillRect(11,20,3,2);
+    ctx.fillRect(7,10,2,8);
+
+    ctx.fillStyle=colors.chairDark;
+    ctx.fillRect(3,12,10,4);
+    ctx.fillStyle=colors.chairMain;
+    ctx.fillRect(3,11,10,3);
+
+    ctx.fillStyle=colors.chairDark;
+    ctx.fillRect(4,2,8,10);
+    ctx.fillStyle=colors.chairMain;
+    ctx.fillRect(5,3,6,8);
+
+    ctx.fillStyle=colors.chairAccent;
+    ctx.fillRect(6,4,2,2);
+    ctx.fillRect(6,7,2,2);
+
+    ctx.fillStyle=colors.chairDark;
+    ctx.fillRect(3,1,3,2);
+    ctx.fillRect(10,1,3,2);
+    ctx.restore();
+}
+
+function drawSign(x, y){
+    ctx.save();
+
+    // posición final
+    ctx.translate(x, y - 36);
+
+
+    const boardX = -12;
+    const boardY = 0;
+    const boardW = 64;
+    const boardH = 44;
+
+    // ================= SOMBRA =================
+    ctx.fillStyle = "#3a1f0e";
+    ctx.fillRect(boardX + 2, boardY + 2, boardW, boardH);
+
+    // ================= TABLA =================
+    ctx.fillStyle = "#8b5a2b";
+    ctx.fillRect(boardX, boardY, boardW, boardH);
+
+    // vetas de madera
+    ctx.fillStyle = "#7a4a23";
+    for (let i = 4; i < boardH; i += 6) {
+        ctx.fillRect(boardX + 2, boardY + i, boardW - 4, 1);
+    }
+
+    // ================= BORDE =================
+    ctx.fillStyle = "#4a2a14";
+    ctx.fillRect(boardX, boardY, boardW, 2);
+    ctx.fillRect(boardX, boardY + boardH - 2, boardW, 2);
+    ctx.fillRect(boardX, boardY, 2, boardH);
+    ctx.fillRect(boardX + boardW - 2, boardY, 2, boardH);
+
+    // ================= POSTE =================
+    ctx.fillStyle = "#5a3b1e";
+    ctx.fillRect(20, boardH, 3, 22);
+
+    // ================= TEXTO =================
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "6px monospace";
+
+    // título
+    ctx.fillText("¿MOD DEL AÑO?", boardX + 8, 10);
+
+    // línea separadora
+    ctx.fillStyle = "#4a2a14";
+    ctx.fillRect(boardX + 6, 13, boardW - 12, 1);
+
+    // nombres
+    ctx.fillStyle = "#ffffff";
+    ctx.fillText("Sobredoxis", boardX + 12, 20);
+    ctx.fillText("Laley",      boardX + 20, 27);
+    ctx.fillText("Bruno",      boardX + 20, 34);
+    ctx.fillText("Liam",       boardX + 22, 41);
+
+    ctx.restore();
+}
+function drawEnemies() {
+    for (const e of enemies) {
+        if (!e.alive) continue;
+
+        ctx.save();
+        ctx.translate(Math.round(e.x), Math.round(e.y));
+
+        // ======================
+        // 🍋 LIMÓN APLASTADO
+        // ======================
+        if (e.squashed) {
+            ctx.fillStyle = "#FFD93D";
+            ctx.fillRect(1, 10, 14, 4);
+
+            ctx.fillStyle = "#E6B800";
+            ctx.fillRect(3, 12, 10, 2);
+
+            // carita aplastada 😵
+            ctx.fillStyle = "#000";
+            ctx.fillRect(4, 11, 2, 1);
+            ctx.fillRect(10,11, 2, 1);
+
+            ctx.restore();
+            continue;
+        }
+
+        // ======================
+        // 🍋 LIMÓN NORMAL
+        // ======================
+        ctx.fillStyle = "#FFD93D";
+        ctx.fillRect(3, 1, 10, 10);
+        ctx.fillRect(2, 2, 12, 8);
+        ctx.fillRect(1, 4, 14, 6);
+        ctx.fillRect(2, 10, 12, 2);
+
+        ctx.fillStyle = "#E6B800";
+        ctx.fillRect(3, 11, 10, 2);
+
+        // ======================
+        // 😠 CARA
+        // ======================
+        ctx.fillStyle = "#000";
+        ctx.fillRect(4, 6, 2, 2);
+        ctx.fillRect(10,6, 2, 2);
+        ctx.fillRect(3, 5, 4, 1);
+        ctx.fillRect(9, 5, 4, 1);
+        ctx.fillRect(6, 9, 4, 1);
+
+        const walk = e.frame === 0 ? 0 : 1;
+
+        // ======================
+        // 👟 ZAPATOS
+        // ======================
+        ctx.fillStyle = "#222";
+        ctx.fillRect(-1 + walk, 13, 8, 3);
+        ctx.fillRect(9 - walk, 13, 8, 3);
+
+        ctx.restore();
+    }
+}
+// =================== DECOR ===================
+function drawBush(x,y){
+    ctx.fillStyle=colors.bushDark;ctx.fillRect(x,y+6,32,10);
+    ctx.fillStyle=colors.bushMid; ctx.fillRect(x+2,y+2,28,10);
+    ctx.fillStyle=colors.bushLight;ctx.fillRect(x+4,y,24,8);
+}
+
+function drawFlower(x,y){
+    ctx.fillStyle=colors.flowerStem;ctx.fillRect(x,y+4,2,6);
+    ctx.fillStyle=colors.flowerPetal;
+    ctx.fillRect(x-3,y,3,3);
+    ctx.fillRect(x+2,y,3,3);
+    ctx.fillRect(x-1,y-2,3,3);
+    ctx.fillRect(x-1,y+2,3,3);
+    ctx.fillStyle=colors.flowerCenter;ctx.fillRect(x,y,2,2);
+}
+// =================== PERSONAJE (sprite actualizado 26x40) ===================
+function drawPlayer() {
+const px = Math.round(player.x);
+const py = Math.round(player.y);
+
+
+    const offsetX = -4;
+    const offsetY = -14;
+
+    ctx.save();
+    if (player.facingLeft) {
+        ctx.translate(px + player.w - offsetX, py + offsetY);
+        ctx.scale(-1, 1);
+    } else {
+        ctx.translate(px + offsetX, py + offsetY);
+    }
+
+    const blink = player.blinking;
+    const state = player.state;
+    const frame = player.frame;
+
+    // --------------------
+    // GORRO DE CUMPLE
+    // --------------------
+    ctx.fillStyle = colors.hatTop;
+    ctx.fillRect(11, 0, 2, 2);
+
+    ctx.fillStyle = colors.hatMain;
+    ctx.fillRect(11, 2, 2, 1);
+    ctx.fillRect(10, 3, 4, 1);
+    ctx.fillRect(9, 4, 6, 1);
+
+    ctx.fillStyle = colors.hatStripe;
+    ctx.fillRect(10, 3, 1, 1);
+    ctx.fillRect(12, 4, 1, 1);
+
+    ctx.fillStyle = colors.hatStripe2;
+    ctx.fillRect(12, 3, 1, 1);
+    ctx.fillRect(10, 4, 1, 1);
+
+    ctx.fillStyle = colors.hatBase;
+    ctx.fillRect(9, 5, 6, 1);
+
+// --------------------
+// CABELLO (reinterpretación pixel-art tipo referencia)
+// --------------------
+
+// sombra base (rompe forma cuadrada)
+ctx.fillStyle = colors.hairShadow;
+ctx.fillRect(4, 6, 18, 9);      // base superior
+ctx.fillRect(3, 13, 7, 14);     // lado izquierdo
+ctx.fillRect(16,13, 7, 14);     // lado derecho
+
+// masa principal
+ctx.fillStyle = colors.hair;
+ctx.fillRect(5, 7, 16, 8);      // corona
+ctx.fillRect(4, 14, 8, 12);     // capa izquierda
+ctx.fillRect(14,14, 8, 12);     // capa derecha
+
+// flequillo ancho tipo cortina (CLAVE)
+ctx.fillRect(6, 10, 6, 5);      // fleco izq
+ctx.fillRect(12,10, 6, 5);      // fleco der
+
+// raya central
+ctx.fillStyle = colors.hairShadow;
+ctx.fillRect(11, 10, 2, 5);
+
+// capas inferiores (silueta)
+ctx.fillStyle = colors.hair;
+ctx.fillRect(5, 26, 5, 3);      // punta izq
+ctx.fillRect(16,26, 5, 3);      // punta der
+
+// brillo mínimo
+ctx.fillStyle = colors.hairHighlight;
+ctx.fillRect(8, 9, 6, 1);
+
+
+    // --------------------
+    // CARA
+    // --------------------
+    ctx.fillStyle = colors.skin;
+    ctx.fillRect(7, 12, 14, 10);
+
+    // mejillas
+    ctx.fillStyle = colors.blush;
+ctx.fillRect(6, 18, 3, 1);
+ctx.fillRect(19,18, 3, 1);
+    // ojos
+    ctx.fillStyle = colors.eyeDark;
+    if (blink) {
+        ctx.fillRect(9, 15, 3, 1);
+        ctx.fillRect(16,15, 3, 1);
+    } else {
+        ctx.fillRect(9, 15, 3, 2);
+        ctx.fillRect(16,15, 3, 2);
+    }
+
+    // boca
+    ctx.fillRect(13, 19, 2, 1);
+
+    // --------------------
+    // CUELLO + TORSO
+    // --------------------
+    ctx.fillStyle = colors.skin;
+    ctx.fillRect(13, 21, 2, 1);
+
+    ctx.fillStyle = colors.shirt;
+    ctx.fillRect(7, 22, 14, 9);
+
+    // mangas
+    ctx.fillRect(5, 22, 3, 7);
+    ctx.fillRect(20,22, 3, 7);
+
+    // textura suave
+    ctx.fillStyle = colors.shirtLight;
+    ctx.fillRect(10, 23, 8, 1);
+    ctx.fillRect(10, 25, 8, 1);
+
+    // --------------------
+    // BRAZOS ANIMADOS
+    // --------------------
+    let armSwing = (state === "walk") ? (frame === 0 ? 2 : -2) : 0;
+
+    ctx.fillStyle = colors.skin;
+    ctx.fillRect(5 + armSwing, 27, 3, 4);
+    ctx.fillRect(20 - armSwing, 27, 3, 4);
+
+   // --------------------
+// PIERNAS (FIJAS – SIN TEMBLOR)
+// --------------------
+ctx.fillStyle = colors.shorts;
+ctx.fillRect(10, 30, 8, 4);
+
+// posiciones totalmente fijas
+const hipY = 34;
+const footY = 38;
+
+const leftX = 10;
+const rightX = 15;
+
+// muslos
+ctx.fillStyle = colors.skin;
+ctx.fillRect(leftX, hipY, 3, 3);
+ctx.fillRect(rightX, hipY, 3, 3);
+
+// botas (ancladas)
+ctx.fillStyle = colors.boot;
+ctx.fillRect(leftX - 1, footY, 5, 2);
+ctx.fillRect(rightX - 1, footY, 5, 2);
+
+    // muslos
+    ctx.fillStyle = colors.skin;
+    ctx.fillRect(leftX, hipY, 3, 3);
+    ctx.fillRect(rightX, hipY, 3, 3);
+
+    // botas (SIEMPRE alineadas → NO parpadean)
+    ctx.fillStyle = colors.boot;
+    ctx.fillRect(leftX - 1, footY, 5, 2);
+    ctx.fillRect(rightX - 1, footY, 5, 2);
+
+    ctx.restore();
+}
+
+// =================== WIN ===================
+function drawWin(){
+    ctx.save();
+    ctx.globalAlpha = 0.7;
+    ctx.fillStyle = "rgba(0,0,0,0.7)";
+    ctx.fillRect(0,0,BASE_WIDTH,BASE_HEIGHT);
+    ctx.globalAlpha = 1;
+
+    ctx.fillStyle="#ffffff";
+    ctx.font="10px monospace";
+    ctx.fillText("¡FELIZ CUMPLEAÑOS! 🎉", 90, 110);
+    ctx.fillText("Presiona R para reiniciar", 90, 130);
+
+    ctx.restore();
+}
+
+// =================== CRT ===================
+function drawCRT(){
+    ctx.save();
+    ctx.globalAlpha = 0.23;
+    ctx.fillStyle = "#000";
+    for(let y=0; y<BASE_HEIGHT; y+=2){
+        ctx.fillRect(0, y, BASE_WIDTH, 1);
+    }
+    ctx.restore();
+}
+const videoOverlay = document.getElementById("videoOverlay");
+const ytVideo = document.getElementById("ytVideo");
+
+function showEndingVideo() {
+
+    // detener música por completo
+    if (musicInterval) {
+        clearInterval(musicInterval);
+        musicInterval = null;
+    }
+
+    // silenciar todo el audio del juego
+    masterGain.gain.value = 0;
+
+    // mostrar video
+    videoOverlay.style.display = "flex";
+    ytVideo.src = "https://www.youtube.com/embed/dQw4w9WgXcQ?autoplay=1";
+}
+</script>
+</body>
+</html>
